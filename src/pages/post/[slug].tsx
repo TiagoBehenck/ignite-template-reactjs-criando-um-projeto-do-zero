@@ -1,14 +1,23 @@
 import { GetStaticPaths, GetStaticProps } from 'next';
-
+import Prismic from '@prismicio/client';
+import { RichText } from 'prismic-dom';
+import { FiCalendar, FiClock, FiUser } from 'react-icons/fi';
+import { useRouter } from 'next/router';
 import { getPrismicClient } from '../../services/prismic';
+
+import Header from '../../components/Header';
 
 import commonStyles from '../../styles/common.module.scss';
 import styles from './post.module.scss';
+import { formateDate } from '../../utils';
 
 interface Post {
+  uid: string;
   first_publication_date: string | null;
+  last_publication_date: string | null;
   data: {
     title: string;
+    subtitle: string;
     banner: {
       url: string;
     };
@@ -26,20 +35,114 @@ interface PostProps {
   post: Post;
 }
 
-// export default function Post() {
-//   // TODO
-// }
+export default function Post({ post }: PostProps): JSX.Element {
+  const router = useRouter();
 
-// export const getStaticPaths = async () => {
-//   const prismic = getPrismicClient();
-//   const posts = await prismic.query(TODO);
+  if (router.isFallback) {
+    return <div>Carregando...</div>;
+  }
 
-//   // TODO
-// };
+  const firstPublicationDateFormatted = formateDate(
+    new Date(post.first_publication_date)
+  );
 
-// export const getStaticProps = async context => {
-//   const prismic = getPrismicClient();
-//   const response = await prismic.getByUID(TODO);
+  const amountWordsOfBody = RichText.asText(
+    post.data.content.reduce((acc, data) => [...acc, ...data.body], [])
+  ).split(' ').length;
 
-//   // TODO
-// };
+  const amountWordsOfHeading = post.data.content.reduce((acc, data) => {
+    if (data.heading) {
+      return [...acc, ...data.heading.split(' ')];
+    }
+
+    return [...acc];
+  }, []).length;
+
+  const readingTime = Math.ceil(
+    (amountWordsOfBody + amountWordsOfHeading) / 200
+  );
+  return (
+    <>
+      <Header />
+      <main className={commonStyles.container}>
+        <article className={styles.postContent}>
+          <img src={post.data.banner.url} alt={post.data.title} />
+          <h1>{post.data.title}</h1>
+          <ul>
+            <li>
+              <FiCalendar color="#BBBBBB" size={20} />
+              {firstPublicationDateFormatted}
+            </li>
+            <li>
+              <FiUser color="#BBBBBB" size={20} />
+              {post.data.author}
+            </li>
+            <li>
+              <FiClock color="#BBBBBB" size={20} />
+              {readingTime} min
+            </li>
+          </ul>
+          <div className={styles.postText}>
+            {post.data.content.map(({ heading, body }) => (
+              <div key={heading}>
+                {heading && <h2>{heading}</h2>}
+
+                <div
+                  className={styles.postSection}
+                  // eslint-disable-next-line react/no-danger
+                  dangerouslySetInnerHTML={{ __html: RichText.asHtml(body) }}
+                />
+              </div>
+            ))}
+          </div>
+        </article>
+      </main>
+    </>
+  );
+}
+
+export const getStaticPaths: GetStaticPaths = async () => {
+  const prismic = getPrismicClient();
+  const posts = await prismic.query([
+    Prismic.predicates.at('document.type', 'posts'),
+  ]);
+
+  const paths = posts.results.map(post => {
+    return {
+      params: {
+        slug: post.uid,
+      },
+    };
+  });
+
+  return {
+    paths,
+    fallback: true,
+  };
+};
+
+export const getStaticProps: GetStaticProps = async ({ params }) => {
+  const { slug } = params;
+  const prismic = getPrismicClient();
+  const response = await prismic.getByUID('posts', String(slug), {});
+
+  const post: Post = {
+    uid: response.uid,
+    first_publication_date: response.first_publication_date,
+    last_publication_date: response.last_publication_date,
+    data: {
+      title: response.data.title,
+      subtitle: response.data.subtitle,
+      banner: response.data.banner,
+      author: response.data.author,
+      content: response.data.content,
+    },
+  };
+
+  return {
+    props: {
+      post,
+    },
+    revalidate: 60 * 60, // 1 hour,
+  };
+};
